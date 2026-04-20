@@ -87,5 +87,46 @@ class TestWaterLevelSampler(unittest.TestCase):
         self.assertAlmostEqual(sampler.get_current_value(), 11.5)
 
 
+class TestPumpAwareness(unittest.TestCase):
+
+    def test_readings_discarded_while_pump_on(self):
+        sampler, published = make_sampler()
+        sampler.on_pump_state_change("on")
+        for _ in range(20):
+            sampler.add_reading(10.0)
+        self.assertEqual(len(published), 0)
+
+    def test_readings_discarded_during_settling_window(self):
+        sampler, published = make_sampler()
+        sampler.on_pump_state_change("on")
+        sampler.on_pump_state_change("off")
+        # immediately after off — still in settling window
+        for _ in range(20):
+            sampler.add_reading(10.0)
+        self.assertEqual(len(published), 0)
+
+    def test_readings_accepted_after_settling_window(self):
+        sampler, published = make_sampler()
+        sampler.on_pump_state_change("on")
+        sampler.on_pump_state_change("off")
+        # backdate pump_off_time past the settling window
+        sampler._pump_off_time -= _mod.PUMP_SETTLING_SECONDS + 1
+        for _ in range(10):
+            sampler.add_reading(10.0)
+        self.assertGreater(len(published), 0)
+
+    def test_pump_safety_timeout_resumes_readings(self):
+        sampler, published = make_sampler()
+        sampler.on_pump_state_change("on")
+        sampler._pump_on_time -= _mod.PUMP_MAX_ON_SECONDS + 1
+        # first reading triggers the timeout and starts the settling window
+        sampler.add_reading(10.0)
+        # backdate pump_off_time past settling so subsequent readings are accepted
+        sampler._pump_off_time -= _mod.PUMP_SETTLING_SECONDS + 1
+        for _ in range(10):
+            sampler.add_reading(10.0)
+        self.assertGreater(len(published), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

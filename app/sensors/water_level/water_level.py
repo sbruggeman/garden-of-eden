@@ -1,6 +1,7 @@
 import threading
 import statistics
 import logging
+import time
 from time import sleep
 
 logger = logging.getLogger(__name__)
@@ -15,12 +16,17 @@ COUNT_FOR_VALUE = 6
 SAMPLE_INTERVAL_SECONDS = 10
 STABLE_VALUE_THRESHOLD_CM = 1.0
 REALTIME_CHANGE_THRESHOLD_CM = 2.0
+PUMP_SETTLING_SECONDS = 60
+# If the pump has been on longer than this with no off signal, assume it stopped.
+PUMP_MAX_ON_SECONDS = 900
 
 
 class WaterLevelSampler:
     """
     Maintains a rolling ring buffer of distance readings and publishes smoothed
     water level values. Readings outside the valid sensor range are discarded.
+    Readings taken while the pump is running or within the settling window after
+    it stops are also discarded — pump turbulence makes them unreliable.
     Publishes the median of the last 6 valid readings to suppress sensor noise.
     """
 
@@ -45,7 +51,39 @@ class WaterLevelSampler:
         self._ring_buffer = []
         self._stable_value = None
         self._last_value_sent = None
+        self._pump_on = False
+        self._pump_on_time = None
+        self._pump_off_time = None
         self._lock = threading.Lock()
+
+    def on_pump_state_change(self, state):
+        with self._lock:
+            if state == "on":
+                self._pump_on = True
+                self._pump_on_time = time.time()
+                logger.warning("Pump on — water level readings paused")
+            elif state == "off":
+                self._pump_on = False
+                self._pump_off_time = time.time()
+                logger.warning(f"Pump off — water level readings paused for {PUMP_SETTLING_SECONDS}s settling")
+
+    def _pump_discard_reason(self, now):
+        """Returns a discard reason string if the reading should be skipped, else None."""
+        if self._pump_on:
+            if self._pump_on_time and now - self._pump_on_time > PUMP_MAX_ON_SECONDS:
+                self._pump_on = False
+                self._pump_off_time = now
+                logger.warning("Pump safety timeout — treating as off")
+            else:
+                return "pump is running"
+
+        if self._pump_off_time:
+            secs_since_off = now - self._pump_off_time
+            if 0 < secs_since_off < PUMP_SETTLING_SECONDS:
+                remaining = int(PUMP_SETTLING_SECONDS - secs_since_off)
+                return f"settling after pump stop ({remaining}s remaining)"
+
+        return None
 
     def add_reading(self, distance_cm):
         if distance_cm is None:
@@ -55,6 +93,11 @@ class WaterLevelSampler:
 
         publish_value = None
         with self._lock:
+            reason = self._pump_discard_reason(time.time())
+            if reason:
+                logger.warning(f"Discarding water level reading {distance_cm:.2f}cm — {reason}")
+                return
+
             self._ring_buffer.append(distance_cm)
             if len(self._ring_buffer) > self._ring_buffer_size:
                 self._ring_buffer = self._ring_buffer[-self._ring_buffer_size:]

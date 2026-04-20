@@ -90,10 +90,14 @@ def toggle_pump():
         logger.info("Toggling Pump ON")
         pump.set_speed(speed)
         client.publish(BASE_TOPIC + "/pump/state", "ON")
+        if sampler:
+            sampler.on_pump_state_change("on")
     else:
         logger.info("Toggling Pump OFF")
         pump.off()
         client.publish(BASE_TOPIC + "/pump/state", "OFF")
+        if sampler:
+            sampler.on_pump_state_change("off")
 
 def handle_button_press():
     global press_count, double_press_timer
@@ -393,9 +397,13 @@ def on_message(client, userdata, msg):
                         client.publish(BASE_TOPIC + "/water/low/state", "OFF", retain=True)
                 pump.set_speed(speed)
                 client.publish(BASE_TOPIC + "/pump/state", "ON")
+                if sampler:
+                    sampler.on_pump_state_change("on")
             elif payload.upper() == "OFF":
                 pump.off()
                 client.publish(BASE_TOPIC + "/pump/state", "OFF")
+                if sampler:
+                    sampler.on_pump_state_change("off")
 
         elif topic_suffix == "pump/speed/set" and payload.isdigit():
             speed = int(payload)

@@ -490,11 +490,11 @@ def publish_humidity(client):
 def publish_water_level(client):
     while True:
         value = sampler.get_current_value() if sampler else None
+        if value is None:
+            value = safe_distance_measure()
         if value is not None:
             logger.info(f"Publishing Water Level: {value:.2f}cm")
             client.publish(BASE_TOPIC + "/water/level", f"{value:.2f}")
-        else:
-            logger.warning("Water level sampler has no value yet, skipping scheduled publish")
         sleep(30 * 60)
 
 def publish_images(client):

@@ -8,7 +8,7 @@ import json
 # import picamera
 # import cv2
 from time import sleep
-from config import USERNAME, PASSWORD, BROKER, PORT, KEEP_ALIVE_INTERVAL, BASE_TOPIC, IDENTIFIER, MODEL, VERSION, WATER_LOW_CM, UPPER_CAMERA_DEVICE, LOWER_CAMERA_DEVICE, UPPER_IMAGE_PATH, LOWER_IMAGE_PATH, CAMERA_RESOLUTION, IMAGE_INTERVAL_SECONDS
+from config import USERNAME, PASSWORD, BROKER, PORT, KEEP_ALIVE_INTERVAL, BASE_TOPIC, IDENTIFIER, MODEL, VERSION, WATER_LOW_CM, UPPER_CAMERA_DEVICE, LOWER_CAMERA_DEVICE, UPPER_IMAGE_PATH, LOWER_IMAGE_PATH, CAMERA_RESOLUTION, IMAGE_INTERVAL_SECONDS, MAX_PUMP_ON_SECONDS
 
 from gpiozero import Button  # Import gpiozero Button
 from gpiozero.pins.pigpio import PiGPIOFactory
@@ -20,6 +20,7 @@ from app.sensors.temperature.temperature import temperature_sensor
 from app.sensors.humidity.humidity import humidity_sensor
 from app.sensors.distance.distance import Distance, MeasurementError
 from app.sensors.water_level.water_level import WaterLevelSampler
+from app.sensors.pump.pump_guardian import PumpGuardian
 
 # Configure logging
 logging.basicConfig(
@@ -42,6 +43,7 @@ logger.warning("This is a warning message")
 logger.error("This is an error message")
 
 sampler = None
+guardian = None
 
 # Initialize devices
 pin_factory = PiGPIOFactory()
@@ -92,12 +94,16 @@ def toggle_pump():
         client.publish(BASE_TOPIC + "/pump/state", "ON")
         if sampler:
             sampler.on_pump_state_change("on")
+        if guardian:
+            guardian.on_pump_on()
     else:
         logger.info("Toggling Pump OFF")
         pump.off()
         client.publish(BASE_TOPIC + "/pump/state", "OFF")
         if sampler:
             sampler.on_pump_state_change("off")
+        if guardian:
+            guardian.on_pump_off()
 
 def handle_button_press():
     global press_count, double_press_timer
@@ -399,11 +405,15 @@ def on_message(client, userdata, msg):
                 client.publish(BASE_TOPIC + "/pump/state", "ON")
                 if sampler:
                     sampler.on_pump_state_change("on")
+                if guardian:
+                    guardian.on_pump_on()
             elif payload.upper() == "OFF":
                 pump.off()
                 client.publish(BASE_TOPIC + "/pump/state", "OFF")
                 if sampler:
                     sampler.on_pump_state_change("off")
+                if guardian:
+                    guardian.on_pump_off()
 
         elif topic_suffix == "pump/speed/set" and payload.isdigit():
             speed = int(payload)
@@ -548,6 +558,13 @@ if __name__ == "__main__":
 
     sampler = WaterLevelSampler(sensor_fn=safe_distance_measure, on_publish=on_water_level_publish)
     sampler.start()
+
+    guardian = PumpGuardian(
+        pump_off_fn=pump.off,
+        mqtt_publish_fn=client.publish,
+        base_topic=BASE_TOPIC,
+        max_on_seconds=MAX_PUMP_ON_SECONDS,
+    )
 
     pcb_temp_thread = threading.Thread(target=publish_pcb_temperature, args=(client,))
     pcb_temp_thread.daemon = True

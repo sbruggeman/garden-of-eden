@@ -370,6 +370,14 @@ def on_connect(client, userdata, flags, rc, properties=None):
     # client.subscribe(BASE_TOPIC + "/light/brightness/set")
     send_discovery_messages(client)
     publish_water_low_mode(client)
+    # Sync actual device state to HA on connect/reconnect
+    client.publish(BASE_TOPIC + "/light/state", "OFF")
+    client.publish(BASE_TOPIC + "/light/brightness/state", str(brightness))
+    client.publish(BASE_TOPIC + "/pump/state", "OFF")
+    client.publish(BASE_TOPIC + "/pump/speed/state", str(speed))
+    if WATER_LOW_CM not in (None, 0):
+        client.publish(BASE_TOPIC + "/water/low/cm", f"{WATER_LOW_CM:.2f}", retain=True)
+    update_water_low_state(client)
 
 def on_message(client, userdata, msg):
     global brightness, speed, WATER_LOW_CM
@@ -555,6 +563,7 @@ if __name__ == "__main__":
     def on_water_level_publish(value):
         logger.info(f"Water level realtime publish: {value:.2f}cm")
         client.publish(BASE_TOPIC + "/water/level", f"{value:.2f}")
+        update_water_low_state(client)
 
     sampler = WaterLevelSampler(sensor_fn=safe_distance_measure, on_publish=on_water_level_publish)
     sampler.start()

@@ -425,7 +425,8 @@ def on_message(client, userdata, msg):
 
         elif topic_suffix == "pump/speed/set" and payload.isdigit():
             speed = int(payload)
-            pump.set_speed(speed)
+            if pump_state:
+                pump.set_speed(speed)
             client.publish(BASE_TOPIC + "/pump/speed/state", str(speed))
 
         # === Light Logic ===
